@@ -234,7 +234,7 @@ const StockMarketMonitor = () => {
   return (
     <div className='min-h-screen bg-gray-50'>
       <div className="mx-auto max-w-7xl p-4">
-        <div className="items-center justify-between flex font-bold text-gray-800 mb-4">
+        <div className="relative z-20 items-center justify-between flex font-bold text-gray-800 mb-4">
           <MultiSelect
                 label="板块筛选"
                 options={Array.isArray(conceptNames) ? conceptNames.filter((name): name is string => typeof name === 'string').map((name) => ({ label: name, value: name })) : []}
@@ -254,17 +254,17 @@ const StockMarketMonitor = () => {
         )}
         {hasData && (
           <>
-            <div className="relative w-full max-h-[80vh] overflow-auto rounded-lg border border-gray-200 shadow-sm">
-              <Table className="border-collapse w-full bg-white">
+            <div className="w-full max-h-[90vh] overflow-auto rounded-lg border border-gray-200 shadow-sm">
+              <Table noWrapper className="border-collapse w-full bg-white">
                 <TableHeader className="sticky top-0 z-10 bg-amber-50 shadow-md">
                   <TableRow className="hover:bg-amber-50">
-                    <TableHead className="w-[10%] text-left font-semibold text-gray-700">
+                    <TableHead className="w-[10%] p-3 text-left font-semibold text-gray-700">
                       板块
                     </TableHead>
-                    <TableHead className="w-[45%] text-left font-semibold text-gray-700">
+                    <TableHead className="w-[45%] p-3 text-left font-semibold text-gray-700">
                       上午
                     </TableHead>
-                    <TableHead className="w-[45%] text-left font-semibold text-gray-700">
+                    <TableHead className="w-[45%] p-3 text-left font-semibold text-gray-700">
                       下午
                     </TableHead>
                   </TableRow>
@@ -273,7 +273,7 @@ const StockMarketMonitor = () => {
                   {(selectedConcepts.length ? selectedConcepts : Object.keys(data)).map((conceptName, index) => (
                     data[conceptName] && (
                       <TableRow key={index} className="hover:bg-gray-50">
-                        <TableCell className="font-semibold align-top text-gray-800 border-r">
+                        <TableCell className="font-semibold align-top text-gray-800 border-r p-3">
                           {conceptName}
                         </TableCell>
                         <TableCell className="align-top border-r p-3 text-left">
