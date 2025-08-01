@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn import Config, Server
 import subprocess
-import sys
 import pandas as pd
 from collections import deque
 from datetime import datetime
@@ -23,9 +22,6 @@ concept_df = None  # Global variable for concepts data
 log_messages = deque(maxlen=1000)  # Store last 1000 log messages
 active_websockets = set()  # Store active WebSocket connections
 
-# --- Move lifespan definition above app creation ---
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,13 +36,12 @@ async def lifespan(app: FastAPI):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            bufsize=1,  # 行缓冲
+            bufsize=1,  # Line-buffered
             universal_newlines=True
         )
         print(f"Started fluctuation watch with PID: {watch_process.pid}")
 
         # 启动输出读取线程
-        import threading
         threading.Thread(
             target=output_reader,
             args=(watch_process.stdout, "fluctuation"),
@@ -75,14 +70,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="API server",
     version="0.1.0",
-    lifespan=lifespan,  # 加上这一行
+    lifespan=lifespan,
 )
 
+# 允许本地开发端口 1420 和 1430 跨域访问
 # Configure CORS settings
 origins = [
     "http://localhost:1420",  # for Tauri dev
+    "http://127.0.0.1:1420",
+    "http://localhost:1430",
+    "http://127.0.0.1:1430",
     "tauri://localhost",      # for Tauri prod
-    "http://localhost:61125"  # for API server
+    "http://localhost:61125",  # for API server
+    "http://127.0.0.1:61125"
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -190,10 +190,22 @@ def get_data_dir():
 
 def get_resource_path(relative_path):
     """获取资源文件的路径，支持开发环境和打包环境"""
-    if hasattr(sys, '_MEIPASS'):
+    try:
         # PyInstaller 创建临时文件夹 _MEIpass，并将路径存储在 _MEIPASS 中
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+        if hasattr(sys, '_MEIPASS'):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        full_path = os.path.join(base_path, relative_path)
+        if os.path.exists(full_path):
+            return full_path
+        else:
+            print(f"Warning: Resource not found at {full_path}")
+            return None
+    except Exception as e:
+        print(f"Error accessing resource path: {e}")
+        return None
 
 def setup_static_directory():
     """设置静态文件目录"""
@@ -238,47 +250,6 @@ def output_reader(pipe, name):
         loop.run_until_complete(broadcast_message(message))
         loop.close()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup: Start the fluctuation watch
-    global watch_process
-    try:
-        watch_process = subprocess.Popen(
-            [sys.executable, "fluctuation.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,  # 行缓冲
-            universal_newlines=True
-        )
-        print(f"Started fluctuation watch with PID: {watch_process.pid}")
-
-        # 启动输出读取线程
-        import threading
-        threading.Thread(
-            target=output_reader,
-            args=(watch_process.stdout, "fluctuation"),
-            daemon=True
-        ).start()
-
-        # 启动错误输出读取线程
-        threading.Thread(
-            target=output_reader,
-            args=(watch_process.stderr, "fluctuation-err"),
-            daemon=True
-        ).start()
-
-        yield
-    finally:
-        # Shutdown: Stop the fluctuation watch
-        if watch_process:
-            watch_process.terminate()
-            try:
-                watch_process.wait(timeout=5)
-                print("Fluctuation watch stopped gracefully")
-            except subprocess.TimeoutExpired:
-                watch_process.kill()
-                print("Fluctuation watch was force stopped")
 
 # Programmatically force shutdown this sidecar.
 def kill_process():
@@ -301,7 +272,11 @@ def start_api_server(**kwargs):
             config = Config(app, host="0.0.0.0", port=port, log_level="info")
             server_instance = Server(config)
             # Start the ASGI server
-            asyncio.run(server_instance.serve())
+            # Use a more robust approach to run the server
+            try:
+                server_instance.run()
+            except Exception as e:
+                print(f"[sidecar] API server error: {e}", flush=True)
         else:
             print(
                 "[sidecar] Failed to start new server. Server instance already running.",
@@ -314,19 +289,22 @@ def start_api_server(**kwargs):
 # Handle the stdin event loop. This can be used like a CLI.
 def stdin_loop():
     print("[sidecar] Waiting for commands...", flush=True)
-    while True:
-        # Read input from stdin.
-        user_input = sys.stdin.readline().strip()
+    try:
+        while True:
+            # Read input from stdin.
+            user_input = sys.stdin.readline().strip()
 
-        # Check if the input matches one of the available functions
-        match user_input:
-            case "sidecar shutdown":
-                print("[sidecar] Received 'sidecar shutdown' command.", flush=True)
-                kill_process()
-            case _:
-                print(
-                    f"[sidecar] Invalid command [{user_input}]. Try again.", flush=True
-                )
+            # Check if the input matches one of the available functions
+            match user_input:
+                case "sidecar shutdown":
+                    print("[sidecar] Received 'sidecar shutdown' command.", flush=True)
+                    kill_process()
+                case _:
+                    print(
+                        f"[sidecar] Invalid command [{user_input}]. Try again.", flush=True
+                    )
+    except Exception as e:
+        print(f"[sidecar] stdin_loop error: {e}", flush=True)
 
 
 # Start the input loop in a separate thread
@@ -335,8 +313,8 @@ def start_input_thread():
         input_thread = threading.Thread(target=stdin_loop)
         input_thread.daemon = True  # so it exits when the main program exits
         input_thread.start()
-    except:
-        print("[sidecar] Failed to start input handler.", flush=True)
+    except Exception as e:
+        print(f"[sidecar] Failed to start input handler: {e}", flush=True)
 
 
 if __name__ == "__main__":
@@ -358,4 +336,8 @@ if __name__ == "__main__":
     start_input_thread()
 
     # Starts API server, blocks further code from execution.
-    start_api_server()
+    try:
+        start_api_server()
+    except Exception as e:
+        print(f"[sidecar] Fatal error in main thread: {e}", flush=True)
+        sys.exit(1)

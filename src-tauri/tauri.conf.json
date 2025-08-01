@@ -27,7 +27,7 @@
       "timestampUrl": ""
     },
     "macOS": {
-      "entitlements": null,
+      "entitlements": "entitlements.plist",
       "exceptionDomain": "",
       "frameworks": [],
       "providerShortName": null,
@@ -41,8 +41,16 @@
   },
   "productName": "tauri-python-sidecar",
   "mainBinaryName": "tauri-python-sidecar",
-  "identifier": "com.openbrewai.obrew",
-  "plugins": {},
+  "identifier": "com.autobiu.ashare",
+  "plugins": {
+    "http": {
+      "all": true,
+      "scope": [
+        "http://localhost:61125/*",
+        "http://127.0.0.1:61125/*"
+      ]
+    }
+  },
   "app": {
     "windows": [
       {

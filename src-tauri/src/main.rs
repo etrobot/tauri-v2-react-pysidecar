@@ -37,6 +37,9 @@ fn spawn_and_monitor_sidecar(app_handle: tauri::AppHandle) -> Result<(), String>
         return Err("Failed to access app state".to_string());
     }
 
+    // Clone app handle for the async task
+    let app_handle_clone = app_handle.clone();
+    
     // Spawn an async task to handle sidecar communication
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
@@ -45,17 +48,30 @@ fn spawn_and_monitor_sidecar(app_handle: tauri::AppHandle) -> Result<(), String>
                     let line = String::from_utf8_lossy(&line_bytes);
                     println!("Sidecar stdout: {}", line);
                     // Emit the line to the frontend
-                    app_handle
-                        .emit("sidecar-stdout", line.to_string())
-                        .expect("Failed to emit sidecar stdout event");
+                    if let Err(e) = app_handle_clone
+                        .emit("sidecar-stdout", line.to_string()) {
+                        eprintln!("Failed to emit sidecar stdout event: {}", e);
+                    }
                 }
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes);
                     eprintln!("Sidecar stderr: {}", line);
                     // Emit the error line to the frontend
-                    app_handle
-                        .emit("sidecar-stderr", line.to_string())
-                        .expect("Failed to emit sidecar stderr event");
+                    if let Err(e) = app_handle_clone
+                        .emit("sidecar-stderr", line.to_string()) {
+                        eprintln!("Failed to emit sidecar stderr event: {}", e);
+                    }
+                }
+                CommandEvent::Terminated(payload) => {
+                    println!("Sidecar process terminated with code: {:?}", payload.code);
+                    // Clear the stored process reference since it's terminated
+                    if let Some(state) = app_handle_clone.try_state::<Arc<Mutex<Option<CommandChild>>>>() {
+                        *state.lock().unwrap() = None;
+                    }
+                    // Emit termination event to frontend
+                    if let Err(e) = app_handle_clone.emit("sidecar-terminated", payload.code) {
+                        eprintln!("Failed to emit sidecar terminated event: {}", e);
+                    }
                 }
                 _ => {}
             }

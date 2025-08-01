@@ -2,7 +2,6 @@ import re,os
 import json
 import pandas as pd
 import requests
-import akshare as ak
 import time as t
 import sys
 
@@ -16,7 +15,17 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 # 设置 akshare 的数据文件路径
-os.environ['AKSHARE_HOME'] = get_resource_path('akshare')
+akshare_path = get_resource_path('akshare')
+os.environ['AKSHARE_HOME'] = akshare_path
+# 确保数据目录存在
+file_fold_path = os.path.join(akshare_path, 'file_fold')
+os.makedirs(file_fold_path, exist_ok=True)
+
+# 创建默认的 calendar.json 文件（如果不存在）
+calendar_path = os.path.join(file_fold_path, 'calendar.json')
+if not os.path.exists(calendar_path):
+    with open(calendar_path, 'w', encoding='utf-8') as f:
+        json.dump({"calendar": []}, f)
 
 HEADERS = {
     'Accept': '*/*',
@@ -35,12 +44,10 @@ def parse_jsonp(jsonp_str):
     if not jsonp_str or not isinstance(jsonp_str, str):
         print("错误：输入不是有效的字符串")
         return None
-    print("\n原始响应前100个字符:", jsonp_str[:100])
     match = re.match(r'^[a-zA-Z0-9_]+\s*\(\s*(.*)\s*\)\s*;?\s*$', jsonp_str.strip(), re.DOTALL)
     if match:
         json_str = match.group(1)
         data = json.loads(json_str)
-        print("JSON解析成功！")
         return data
     else:
         return json.loads(jsonp_str)
@@ -159,24 +166,10 @@ def getChanges(concept_df: pd.DataFrame):
         # 新增一列用于排序，转为分钟数
         html_df['时间排序'] = html_df['时间'].apply(lambda tm: int(tm[:2])*60 + int(tm[3:5]))
         html_df = html_df.sort_values(['上下午','板块名称', '时间排序'])
-        # 确保 static 目录存在
-        os.makedirs('static', exist_ok=True)
-        # 保存到 static 目录下
-        # 保存为csv，追加且去重（股票代码+时间+四舍五入取整）
-        csv_file = 'static/changes.csv'
-        if os.path.exists(csv_file):
-            old_df = pd.read_csv(csv_file)
-            combined = pd.concat([old_df, html_df], ignore_index=True)
-            # 去重，保留最新一条
-            combined = combined.drop_duplicates(subset=['名称', '类型'], keep='last')
-            combined.to_csv(csv_file, index=False, encoding='utf-8')
-            return combined
-        else:
-            html_df=html_df.drop_duplicates(subset=['名称', '类型'], keep='last')
-            html_df.to_csv(csv_file, index=False, encoding='utf-8')
-            print(f"已保存到{csv_file}，当前总行数：", pd.read_csv(csv_file).shape[0])
-            return html_df
-        
+        # 只在内存处理和去重，不再写入 static/changes.csv
+        html_df = html_df.drop_duplicates(subset=['名称', '类型'], keep='last')
+        return html_df
+
 
 
 def getRisingConcepts():
@@ -200,22 +193,22 @@ def getRisingConcepts():
     bkcodes = [ x['f12'] for x in data if int(x['f20'])<5000000000000 and not '昨日' in x['f14']]
     return bkcodes
 
-def getConcepts():
-    concepts=[['板块代码','板块名称','股票代码','股票名称']]
-    stock_board_concept_name_em_df = ak.stock_board_concept_name_em()
-    stock_board_concept_name_em_df.sort_values(by='总市值',ascending=True,inplace=True)
-    for k,v in stock_board_concept_name_em_df.iterrows():
-        if int(v['总市值'])>30000000000000 or '昨日' in v['板块名称']:
-            continue
-        stock_board_concept_spot_em_df = ak.stock_board_concept_cons_em(symbol=v['板块代码'])
-        for k2,v2 in stock_board_concept_spot_em_df.iterrows():
-            row = [v['板块代码'],v['板块名称'],v2['代码'],v2['名称']]
-            concepts.append(row)
-        print(v['板块名称'],len(concepts))
-        if len(concepts)%20==0:
-            t.sleep(15)
-    df = pd.DataFrame(concepts,columns=['板块代码','板块名称','股票代码','股票名称'])
-    df.to_csv('static/concepts.csv',index=False)
+# def getConcepts():
+#     concepts=[['板块代码','板块名称','股票代码','股票名称']]
+#     stock_board_concept_name_em_df = ak.stock_board_concept_name_em()
+#     stock_board_concept_name_em_df.sort_values(by='总市值',ascending=True,inplace=True)
+#     for k,v in stock_board_concept_name_em_df.iterrows():
+#         if int(v['总市值'])>30000000000000 or '昨日' in v['板块名称']:
+#             continue
+#         stock_board_concept_spot_em_df = ak.stock_board_concept_cons_em(symbol=v['板块代码'])
+#         for k2,v2 in stock_board_concept_spot_em_df.iterrows():
+#             row = [v['板块代码'],v['板块名称'],v2['代码'],v2['名称']]
+#             concepts.append(row)
+#         print(v['板块名称'],len(concepts))
+#         if len(concepts)%20==0:
+#             t.sleep(15)
+#     df = pd.DataFrame(concepts,columns=['板块代码','板块名称','股票代码','股票名称'])
+#     df.to_csv('static/concepts.csv',index=False)
 
 def watch():
     if not os.path.exists('static/concepts.csv'):
