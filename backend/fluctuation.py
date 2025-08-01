@@ -4,6 +4,19 @@ import pandas as pd
 import requests
 import akshare as ak
 import time as t
+import sys
+
+def get_resource_path(relative_path):
+    """获取资源文件的路径，支持开发环境和打包环境"""
+    if hasattr(sys, '_MEIPASS'):
+        # PyInstaller 创建临时文件夹 _MEIpass，并将路径存储在 _MEIPASS 中
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+# 设置 akshare 的数据文件路径
+os.environ['AKSHARE_HOME'] = get_resource_path('akshare')
 
 HEADERS = {
     'Accept': '*/*',
@@ -157,9 +170,13 @@ def getChanges(concept_df: pd.DataFrame):
             # 去重，保留最新一条
             combined = combined.drop_duplicates(subset=['名称', '类型'], keep='last')
             combined.to_csv(csv_file, index=False, encoding='utf-8')
+            return combined
         else:
-            html_df.drop_duplicates(subset=['名称', '类型'], keep='last').to_csv(csv_file, index=False, encoding='utf-8')
-        print(f"已保存到{csv_file}，当前总行数：", pd.read_csv(csv_file).shape[0])
+            html_df=html_df.drop_duplicates(subset=['名称', '类型'], keep='last')
+            html_df.to_csv(csv_file, index=False, encoding='utf-8')
+            print(f"已保存到{csv_file}，当前总行数：", pd.read_csv(csv_file).shape[0])
+            return html_df
+        
 
 
 def getRisingConcepts():
@@ -204,18 +221,6 @@ def watch():
     if not os.path.exists('static/concepts.csv'):
         getConcepts()
     concept_df = pd.read_csv('static/concepts.csv')
-    while True:
-        now = t.localtime()
-        now_minutes = now.tm_hour * 60 + now.tm_min
-        # 定义允许的时间段（分钟）
-        allowed_periods = [
-            (9*60+30, 11*60+30),   # 上午9:30-11:30
-            (13*60, 15*60)         # 下午13:00-15:00
-        ]
-        in_period = any(start <= now_minutes <= end for start, end in allowed_periods)
-        if in_period:
-            getChanges(concept_df)
-        t.sleep(2)
 
 
 # main() and script entry removed to prevent standalone API server startup
