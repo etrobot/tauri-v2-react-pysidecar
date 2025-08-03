@@ -1,9 +1,39 @@
-import re,os
+import re, os
 import json
 import pandas as pd
 import requests
 import time as t
+from typing import Optional
 import sys
+import akshare as ak
+
+
+def filter_stock_data(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """
+    过滤股票数据，根据涨跌幅、类型和股票名称进行筛选
+    
+    Args:
+        df: 包含股票数据的DataFrame，需要包含'涨跌幅'、'类型'和'股票名称'列
+        
+    Returns:
+        过滤后的DataFrame，如果输入为None或空则返回None
+    """
+    if df is None or df.empty:
+        return None
+        
+    # 过滤涨跌幅条件：涨幅<100% 且 (涨幅≥5% 或 跌幅≤-5%)
+    df = df.copy()
+    df = df[(df['涨跌幅'] < 1) & ((df['涨跌幅'] >= 0.05) | (df['涨跌幅'] <= -0.05))]
+    
+    # 过滤负面类型
+    negative_types = ['8194', '8', '128', '8208', '8210', '8212', '8214', '8216', '8203', '99', '106']
+    df = df[~df['类型'].astype(str).isin(negative_types)]
+    
+    # 过滤ST股票
+    df = df[~df['股票名称'].str.contains('ST')]
+    
+    return df
+
 
 def get_resource_path(relative_path):
     """获取资源文件的路径，支持开发环境和打包环境"""
@@ -95,11 +125,7 @@ def getChanges(concept_df: pd.DataFrame):
                 if not df.empty:
                     df['涨跌幅'] = info_df[0]
 
-            df = df[(df['涨跌幅'] < 1) & ((df['涨跌幅'] >= 0.05) | (df['涨跌幅'] <= -0.05))]
-
-        # 过滤掉负面类型
-        negative_types = ['8194', '8', '128', '8208', '8210', '8212', '8214', '8216', '8203', '99', '106']  # 包含大笔卖出、封跌停板、竞价下跌、向下缺口、60日新低、60日大幅下跌、高台跳水、加速下跌等
-        df = df[~df['类型'].astype(str).isin(negative_types)]
+        df = filter_stock_data(df)
 
         # 转换为指定的输出格式
         def format_time(tm):
@@ -193,27 +219,8 @@ def getRisingConcepts():
     bkcodes = [ x['f12'] for x in data if int(x['f20'])<5000000000000 and not '昨日' in x['f14']]
     return bkcodes
 
-# def getConcepts():
-#     concepts=[['板块代码','板块名称','股票代码','股票名称']]
-#     stock_board_concept_name_em_df = ak.stock_board_concept_name_em()
-#     stock_board_concept_name_em_df.sort_values(by='总市值',ascending=True,inplace=True)
-#     for k,v in stock_board_concept_name_em_df.iterrows():
-#         if int(v['总市值'])>30000000000000 or '昨日' in v['板块名称']:
-#             continue
-#         stock_board_concept_spot_em_df = ak.stock_board_concept_cons_em(symbol=v['板块代码'])
-#         for k2,v2 in stock_board_concept_spot_em_df.iterrows():
-#             row = [v['板块代码'],v['板块名称'],v2['代码'],v2['名称']]
-#             concepts.append(row)
-#         print(v['板块名称'],len(concepts))
-#         if len(concepts)%20==0:
-#             t.sleep(15)
-#     df = pd.DataFrame(concepts,columns=['板块代码','板块名称','股票代码','股票名称'])
-#     df.to_csv('static/concepts.csv',index=False)
-
-def watch():
-    if not os.path.exists('static/concepts.csv'):
-        getConcepts()
-    concept_df = pd.read_csv('static/concepts.csv')
+from .concepts import getConcepts
 
 
-# main() and script entry removed to prevent standalone API server startup
+
+

@@ -2,8 +2,9 @@ import os
 import sys
 import asyncio
 import threading
-from fastapi import FastAPI, Body, WebSocket
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Body, WebSocket, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn import Config, Server
 import subprocess
@@ -178,6 +179,26 @@ async def get_changes_json():
         return JSONResponse(content=data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading CSV: {str(e)}")
+
+
+# This must be the last route to catch all other routes
+@app.get("/{rest_of_path:path}")
+async def serve_frontend(rest_of_path: str):
+    dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist"))
+    # This is the file path to check
+    file_path = os.path.join(dist_dir, rest_of_path)
+
+    # If the file exists and it's a file, serve it
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return FileResponse(file_path)
+
+    # Otherwise, it's a route for the SPA, so serve index.html
+    index_path = os.path.join(dist_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    
+    # If index.html doesn't exist, then something is wrong with the frontend build
+    raise HTTPException(status_code=404, detail="Frontend not found. Make sure you have built the frontend and the 'dist' directory is correct.")
 
 def get_data_dir():
     """获取用户数据目录"""
