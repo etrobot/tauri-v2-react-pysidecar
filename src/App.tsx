@@ -55,155 +55,88 @@ const StockMarketMonitor = () => {
     return isTrading;
   };
 
-  // Function to load and display data
-  const loadData = async () => {
-    // 如果已经有数据且是交易时间，则不加载新数据
-    if (hasData && !isTradingHours()) {
-      return;
-    }
-
-    try {
-      const response = await fetch('http://localhost:61125/api/changes/json', {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-
-      if (!response.ok) throw new Error('Network response was not ok');
-
-      const fetchedData: StockDataItem[] = await response.json();
-
-      if (fetchedData && fetchedData.length > 0) {
-        const concepts: ConceptData = {};
-        const conceptNameSet = new Set<string>();
-        setUpdateTime(new Date().toLocaleString('zh-CN', { hour12: false }));
-        for (const item of fetchedData) {
-          // 初始化概念数据
-          if (!concepts[item["板块名称"]]) {
-            concepts[item["板块名称"]] = { "上午": {}, "下午": {} };
-          }
-
-          const period = item["上下午"];
-          const time = item["时间"];
-
-          // 确保时间段和时间点都存在
-          if (!concepts[item["板块名称"]][period][time]) {
-            concepts[item["板块名称"]][period][time] = [];
-          }
-
-          // 处理数据转换
-          const valueStr = item["四舍五入取整"] > 0 ?
-            `+${item["四舍五入取整"]}` :
-            item["四舍五入取整"].toString();
-
-          // 添加股票信息
-          concepts[item["板块名称"]][period][time].push({
-            name: item["名称"],
-            value: valueStr,
-            isLimit: item["类型"] === "封涨停板"
-          });
-
-          // 收集板块名
-          if (item["板块名称"]) {
-            conceptNameSet.add(item["板块名称"]);
-          }
-        }
-        setHasData(true);
-        setData(concepts);
-        setConceptNames(Array.from(conceptNameSet));
-        console.log('[DEBUG] conceptNameSet', conceptNameSet, 'conceptNames', Array.from(conceptNameSet));
-      }
-    } catch (error) {
-      console.error('Error loading data:', error);
-      if (!hasData) {
-        setLoadingMessage('启动服务中，请稍后...');
-      }
-    }
-  };
-
-  const checkAndLoadData = () => {
-    // 如果还没有数据，则发送请求获取数据
-    if (!hasData) {
-      setLoadingMessage('正在更新数据...');
-      loadData();
-      return;
-    }
-
-    // 如果已经有数据，则检查是否为交易时间，如果是则不加载数据
-    if (hasData && !isTradingHours()) {
-      console.log('Already has data and is trading hours, skipping data load');
-      return;
-    }
-  };
-
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
-    let timeout: NodeJS.Timeout | null = null;
+    // WebSocket连接
+    let ws: WebSocket | null = null;
+    let reconnectTimer: NodeJS.Timeout | null = null;
+    let manuallyClosed = false;
 
-    // 定义一个函数，轮询时机只在交易时间或还没数据时
-    const poll = () => {
-      // 如果有数据且非交易时间，停止轮询，等待下一个交易时段
-      if (hasData && !isTradingHours()) {
-        if (interval) clearInterval(interval);
-        interval = null;
-        // 计算距离下一个交易时段的毫秒数
-        const now = new Date();
-        const beijingTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
-        const day = beijingTime.getDay();
-        const hours = beijingTime.getHours();
-        const minutes = beijingTime.getMinutes();
-        let msToNext = 0;
-        // 只考虑工作日的下一个交易时段
-        if (day >= 1 && day <= 5) {
-          if (hours < 9 || (hours === 9 && minutes < 30)) {
-            // 距离上午开盘
-            msToNext = ((9 * 60 + 30) - (hours * 60 + minutes)) * 60 * 1000 - beijingTime.getSeconds() * 1000 - beijingTime.getMilliseconds();
-          } else if (hours < 13) {
-            // 距离下午开盘
-            msToNext = ((13 * 60) - (hours * 60 + minutes)) * 60 * 1000 - beijingTime.getSeconds() * 1000 - beijingTime.getMilliseconds();
-          } else {
-            // 距离明天上午开盘
-            msToNext = ((24 - hours + 9) * 60 + 30 - minutes) * 60 * 1000 - beijingTime.getSeconds() * 1000 - beijingTime.getMilliseconds();
-            if (day === 5) {
-              // 如果今天是周五，下次交易是下周一
-              msToNext += 2 * 24 * 60 * 60 * 1000;
+    function connectWS() {
+      ws = new window.WebSocket('ws://localhost:61125/ws/changes');
+      ws.onopen = () => {
+        setLoadingMessage('已连接数据流...');
+      };
+      ws.onmessage = (event) => {
+        try {
+          const fetchedData: StockDataItem[] = JSON.parse(event.data);
+          setUpdateTime(new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }));
+          if (fetchedData && fetchedData.length > 0) {
+            // 处理数据逻辑，与原fetch一致
+            const concepts: ConceptData = {};
+            const conceptNameSet = new Set<string>();
+            for (const item of fetchedData) {
+              if (!item["板块名称"] || !item["时间"] || !item["名称"]) continue;
+              if (!concepts[item["板块名称"]]) {
+                concepts[item["板块名称"]] = { "上午": {}, "下午": {} };
+              }
+              const period = item["上下午"];
+              const time = item["时间"];
+              if (!concepts[item["板块名称"]][period][time]) {
+                concepts[item["板块名称"]][period][time] = [];
+              }
+              let valueStr = '';
+              if (typeof item["四舍五入取整"] === 'number') {
+                valueStr = item["四舍五入取整"].toString();
+              }
+              concepts[item["板块名称"]][period][time].push({
+                name: item["名称"],
+                value: valueStr,
+                isLimit: item["类型"] === "封涨停板"
+              });
+              if (item["板块名称"]) {
+                conceptNameSet.add(item["板块名称"]);
+              }
             }
+            setHasData(true);
+            setData(concepts);
+            setConceptNames(Array.from(conceptNameSet));
           }
-        } else {
-          // 周末，距离下周一上午开盘
-          const daysToMonday = ((8 - day) % 7);
-          msToNext = (daysToMonday * 24 * 60 + (9 * 60 + 30) - (hours * 60 + minutes)) * 60 * 1000 - beijingTime.getSeconds() * 1000 - beijingTime.getMilliseconds();
+        } catch (error) {
+          setLoadingMessage('数据解析错误');
+          setHasData(false);
         }
-        // 设置定时器，到下一个交易时段自动恢复轮询
-        timeout = setTimeout(() => {
-          checkAndLoadData();
-          if (!interval) {
-            interval = setInterval(poll, 2000);
-          }
-        }, msToNext > 0 ? msToNext : 60 * 1000); // 兜底一分钟
-        return;
-      }
-      // 正常轮询
-      checkAndLoadData();
-    };
-
-    // 立即执行一次
-    poll();
-    if (!interval) {
-      interval = setInterval(poll, 2000);
+      };
+      ws.onerror = () => {
+        setLoadingMessage('WebSocket连接错误，尝试重连...');
+      };
+      ws.onclose = () => {
+        if (!manuallyClosed) {
+          setLoadingMessage('连接断开，正在重连...');
+          reconnectTimer = setTimeout(connectWS, 2000);
+        }
+      };
     }
-
+    connectWS();
     return () => {
-      if (interval) clearInterval(interval);
-      if (timeout) clearTimeout(timeout);
+      manuallyClosed = true;
+      if (ws) ws.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, [hasData]);
+  }, []);
 
   const renderStockInfo = (stocks: StockInfo[]): JSX.Element => {
+    // 前端按“名称+类型”去重，类型字段通过 stock.isLimit 判断
+    const uniqueStocksMap = new Map<string, StockInfo>();
+    stocks.forEach((stock) => {
+      // 用“名称+类型”拼接做唯一key
+      const typeStr = stock.isLimit ? 'limit' : 'normal';
+      const key = `${stock.name}__${typeStr}`;
+      uniqueStocksMap.set(key, stock);
+    });
+    const uniqueStocks = Array.from(uniqueStocksMap.values());
     return (
       <>
-        {stocks.map((stock, index) => (
+        {uniqueStocks.map((stock, index) => (
           <React.Fragment key={index}>
             {index > 0 && ', '}
             {stock.name} {(

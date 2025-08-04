@@ -3,6 +3,7 @@ import pandas as pd
 import akshare as ak
 from typing import List, List
 
+
 def getConcepts() -> None:
     """
     Fetch concept stock data and save to a CSV file.

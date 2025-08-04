@@ -219,7 +219,6 @@ def getRisingConcepts():
     bkcodes = [ x['f12'] for x in data if int(x['f20'])<5000000000000 and not '昨日' in x['f14']]
     return bkcodes
 
-from .concepts import getConcepts
 
 
 
